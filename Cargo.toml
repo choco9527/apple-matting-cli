@@ -1,0 +1,30 @@
+[package]
+name = "apple-matting-cli"
+version = "0.1.0"
+description = "Local background removal CLI and HTTP service powered by macOS Vision"
+authors = ["XIAOBIN"]
+edition = "2021"
+license = "GPL-3.0-only"
+repository = "https://github.com/choco9527/apple-matting-cli"
+homepage = "https://github.com/choco9527/apple-matting-cli"
+readme = "README.md"
+keywords = ["matting", "background-removal", "vision", "macos", "cli"]
+categories = ["command-line-utilities", "multimedia::images"]
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+# The library is shared by the CLI binary and keeps matting testable.
+name = "apple_matting_lib"
+crate-type = ["rlib"]
+
+[build-dependencies]
+
+[dependencies]
+axum = { version = "0.7", features = ["multipart"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tempfile = "3"
+thiserror = "1"
+tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "fs"] }
+tower-http = { version = "0.6", features = ["cors"] }
