@@ -59,10 +59,13 @@ apple-matting-cli input.jpg output.png
 apple-matting-cli input.jpg -o output.png
 apple-matting-cli input.jpg --output output.png
 apple-matting-cli input.jpg --crop -o output.png
+apple-matting-cli input.jpg --background white -o output.png
+apple-matting-cli input.jpg --background "#FFCC00" -o output.png
 ```
 
-没有指定输出路径时，会在原图旁生成 `input_nobg.png`。所有结果均为透明 PNG；
-`--crop` 会把结果裁剪到检测到的前景边界。
+没有指定输出路径时，会在原图旁生成 `input_nobg.png`。背景默认透明；
+`--background` 支持 `transparent`、`white`、`black` 或带引号的 `#RRGGBB`
+颜色。所有结果均为 PNG；`--crop` 会把结果裁剪到检测到的前景边界。
 
 ## 批量处理
 
@@ -70,6 +73,7 @@ apple-matting-cli input.jpg --crop -o output.png
 apple-matting-cli --batch ./input -o ./output
 apple-matting-cli --batch ./input -o ./output --recursive
 apple-matting-cli --batch ./input -o ./output --crop --recursive --jobs 3
+apple-matting-cli --batch ./input -o ./output --background white --jobs 3
 ```
 
 批量行为：
@@ -79,6 +83,7 @@ apple-matting-cli --batch ./input -o ./output --crop --recursive --jobs 3
 - 默认只处理目录第一层；添加 `--recursive` 后递归处理。
 - 递归模式下保留相对目录结构。
 - 默认三个工作线程，`--jobs` 允许 1 到 64。
+- 整批任务只需设置一次 `--background`，默认透明。
 - 单张失败不会中断整批任务。
 - 成功输出路径写入 stdout，错误和最终汇总写入 stderr。
 - 全部成功返回退出码 `0`；任意图片失败返回 `1`。
@@ -101,7 +106,8 @@ curl -X POST -F "file=@input.jpg" \
   http://127.0.0.1:8080/matting --output output.png
 ```
 
-添加 `-F "crop=true"` 可裁剪主体。成功响应为 `image/png`，抠图失败返回 HTTP `422`。
+添加 `-F "crop=true"` 可裁剪主体，添加 `-F "background=#FFFFFF"` 可设置纯色背景。
+成功响应为 `image/png`；背景颜色无效时返回 HTTP `400`，抠图失败返回 HTTP `422`。
 
 服务监听 `0.0.0.0` 并开放 CORS，目前没有内置鉴权、上传大小限制、限流、队列或
 全局并发控制。只应在可信网络使用，公网部署必须放在带鉴权和限流的代理后面。
@@ -130,8 +136,8 @@ scripts/benchmark-batch.sh ./sample.png
 
 ```text
 Usage:
-  apple-matting-cli <input-image> [-o|--output <output-png>] [--crop]
-  apple-matting-cli --batch <input-dir> -o <output-dir> [--crop] [--recursive] [--jobs <count>]
+  apple-matting-cli <input-image> [-o|--output <output-png>] [--crop] [--background <color>]
+  apple-matting-cli --batch <input-dir> -o <output-dir> [--crop] [--background <color>] [--recursive] [--jobs <count>]
   apple-matting-cli --server [--port <port>]
   apple-matting-cli --version
 ```

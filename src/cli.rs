@@ -10,14 +10,14 @@ use serde::Serialize;
 use tower_http::cors::CorsLayer;
 
 use crate::batch::{perform_batch, BatchSummary};
-use crate::matting::perform_matting;
+use crate::matting::{perform_matting, Background};
 
 const DEFAULT_SERVER_PORT: u16 = 8080;
 const DEFAULT_BATCH_JOBS: usize = 3;
 const MAX_BATCH_JOBS: usize = 64;
 const USAGE: &str = "Usage:
-  apple-matting-cli <input-image> [-o|--output <output-png>] [--crop]
-  apple-matting-cli --batch <input-dir> -o <output-dir> [--crop] [--recursive] [--jobs <count>]
+  apple-matting-cli <input-image> [-o|--output <output-png>] [--crop] [--background <color>]
+  apple-matting-cli --batch <input-dir> -o <output-dir> [--crop] [--background <color>] [--recursive] [--jobs <count>]
   apple-matting-cli --server [--port <port>]
   apple-matting-cli --version";
 
@@ -29,6 +29,7 @@ pub enum CliArgs {
         input_dir: String,
         output_dir: String,
         crop_to_subject: bool,
+        background: Background,
         recursive: bool,
         jobs: usize,
     },
@@ -36,6 +37,7 @@ pub enum CliArgs {
         input_path: String,
         output_path: Option<String>,
         crop_to_subject: bool,
+        background: Background,
     },
     Server {
         port: u16,
@@ -68,6 +70,7 @@ pub fn parse_args(args: &[String]) -> Result<CliArgs, String> {
 
 fn parse_run_args(args: &[String]) -> Result<CliArgs, String> {
     let mut crop_to_subject = false;
+    let mut background = None;
     let mut input_path: Option<String> = None;
     let mut output_path: Option<String> = None;
     let mut index = 1;
@@ -77,6 +80,13 @@ fn parse_run_args(args: &[String]) -> Result<CliArgs, String> {
             "--crop" => {
                 crop_to_subject = true;
                 index += 1;
+            }
+            "--background" => {
+                let value = option_value(args, index)?;
+                if background.replace(Background::parse(&value)?).is_some() {
+                    return Err(USAGE.to_string());
+                }
+                index += 2;
             }
             "-o" | "--output" => {
                 if input_path.is_none() {
@@ -116,6 +126,7 @@ fn parse_run_args(args: &[String]) -> Result<CliArgs, String> {
         input_path,
         output_path,
         crop_to_subject,
+        background: background.unwrap_or_default(),
     })
 }
 
@@ -146,6 +157,7 @@ fn parse_batch_args(args: &[String]) -> Result<CliArgs, String> {
     let mut input_dir = None;
     let mut output_dir = None;
     let mut crop_to_subject = false;
+    let mut background = None;
     let mut recursive = false;
     let mut jobs = DEFAULT_BATCH_JOBS;
     let mut index = 1;
@@ -170,6 +182,13 @@ fn parse_batch_args(args: &[String]) -> Result<CliArgs, String> {
                 crop_to_subject = true;
                 index += 1;
             }
+            "--background" => {
+                let value = option_value(args, index)?;
+                if background.replace(Background::parse(&value)?).is_some() {
+                    return Err(USAGE.to_string());
+                }
+                index += 2;
+            }
             "-r" | "--recursive" => {
                 recursive = true;
                 index += 1;
@@ -187,6 +206,7 @@ fn parse_batch_args(args: &[String]) -> Result<CliArgs, String> {
         input_dir: input_dir.ok_or_else(|| USAGE.to_string())?,
         output_dir: output_dir.ok_or_else(|| USAGE.to_string())?,
         crop_to_subject,
+        background: background.unwrap_or_default(),
         recursive,
         jobs,
     })
@@ -224,9 +244,17 @@ pub async fn run(args: Vec<String>) -> i32 {
             input_dir,
             output_dir,
             crop_to_subject,
+            background,
             recursive,
             jobs,
-        }) => match perform_batch(&input_dir, &output_dir, crop_to_subject, recursive, jobs) {
+        }) => match perform_batch(
+            &input_dir,
+            &output_dir,
+            crop_to_subject,
+            background,
+            recursive,
+            jobs,
+        ) {
             Ok(summary) => report_batch(summary),
             Err(error) => {
                 eprintln!("{error}");
@@ -237,7 +265,13 @@ pub async fn run(args: Vec<String>) -> i32 {
             input_path,
             output_path,
             crop_to_subject,
-        }) => match perform_matting(&input_path, output_path.as_deref(), crop_to_subject) {
+            background,
+        }) => match perform_matting(
+            &input_path,
+            output_path.as_deref(),
+            crop_to_subject,
+            background,
+        ) {
             Ok(path) => {
                 println!("{path}");
                 0
@@ -286,7 +320,9 @@ async fn run_server(port: u16) -> Result<(), String> {
         .map_err(|error| format!("Could not bind server to {address}: {error}"))?;
 
     eprintln!("apple-matting-cli server listening on http://{address}");
-    eprintln!("POST multipart/form-data to /matting with field name `file`");
+    eprintln!(
+        "POST multipart/form-data to /matting with `file` and optional `crop`/`background` fields"
+    );
 
     axum::serve(listener, app)
         .await
@@ -295,6 +331,7 @@ async fn run_server(port: u16) -> Result<(), String> {
 
 async fn handle_matting(mut multipart: Multipart) -> Result<Response, ApiError> {
     let mut crop_to_subject = false;
+    let mut background = Background::Transparent;
     let mut uploaded_file: Option<UploadedFile> = None;
 
     while let Some(field) = multipart
@@ -307,6 +344,13 @@ async fn handle_matting(mut multipart: Multipart) -> Result<Response, ApiError> 
         if name == "crop" {
             let value = field.text().await.map_err(ApiError::bad_request)?;
             crop_to_subject = matches!(value.trim().to_lowercase().as_str(), "true" | "1" | "yes");
+            continue;
+        }
+
+        if name == "background" {
+            let value = field.text().await.map_err(ApiError::bad_request)?;
+            background = Background::parse(&value)
+                .map_err(|message| ApiError::new(StatusCode::BAD_REQUEST, message))?;
             continue;
         }
 
@@ -339,7 +383,12 @@ async fn handle_matting(mut multipart: Multipart) -> Result<Response, ApiError> 
     let output_string = output_path.to_string_lossy().to_string();
 
     let matting_result = tokio::task::spawn_blocking(move || {
-        perform_matting(&input_string, Some(&output_string), crop_to_subject)
+        perform_matting(
+            &input_string,
+            Some(&output_string),
+            crop_to_subject,
+            background,
+        )
     })
     .await
     .map_err(ApiError::internal)?;
@@ -421,8 +470,12 @@ impl IntoResponse for ApiError {
 }
 
 #[cfg(test)]
+mod background_tests;
+
+#[cfg(test)]
 mod tests {
     use super::{parse_args, CliArgs, DEFAULT_BATCH_JOBS, DEFAULT_SERVER_PORT, USAGE};
+    use crate::matting::Background;
 
     #[test]
     fn parses_input_only() {
@@ -434,6 +487,7 @@ mod tests {
                 input_path: "input.jpg".to_string(),
                 output_path: None,
                 crop_to_subject: false,
+                background: Background::Transparent,
             })
         );
     }
@@ -452,6 +506,7 @@ mod tests {
                 input_path: "input.jpg".to_string(),
                 output_path: Some("output.png".to_string()),
                 crop_to_subject: false,
+                background: Background::Transparent,
             })
         );
     }
@@ -471,6 +526,7 @@ mod tests {
                 input_path: "input.jpg".to_string(),
                 output_path: Some("output.png".to_string()),
                 crop_to_subject: false,
+                background: Background::Transparent,
             })
         );
     }
@@ -490,6 +546,7 @@ mod tests {
                 input_path: "input.jpg".to_string(),
                 output_path: Some("output.png".to_string()),
                 crop_to_subject: false,
+                background: Background::Transparent,
             })
         );
     }
@@ -508,6 +565,7 @@ mod tests {
                 input_path: "input.jpg".to_string(),
                 output_path: None,
                 crop_to_subject: true,
+                background: Background::Transparent,
             })
         );
     }
@@ -528,6 +586,7 @@ mod tests {
                 input_path: "input.jpg".to_string(),
                 output_path: Some("output.png".to_string()),
                 crop_to_subject: true,
+                background: Background::Transparent,
             })
         );
     }
@@ -584,6 +643,7 @@ mod tests {
                 input_dir: "input".to_string(),
                 output_dir: "output".to_string(),
                 crop_to_subject: false,
+                background: Background::Transparent,
                 recursive: false,
                 jobs: DEFAULT_BATCH_JOBS,
             })
@@ -599,6 +659,8 @@ mod tests {
             "--output".to_string(),
             "output".to_string(),
             "--crop".to_string(),
+            "--background".to_string(),
+            "white".to_string(),
             "--recursive".to_string(),
             "--jobs".to_string(),
             "5".to_string(),
@@ -610,6 +672,11 @@ mod tests {
                 input_dir: "input".to_string(),
                 output_dir: "output".to_string(),
                 crop_to_subject: true,
+                background: Background::Solid {
+                    red: 255,
+                    green: 255,
+                    blue: 255,
+                },
                 recursive: true,
                 jobs: 5,
             })

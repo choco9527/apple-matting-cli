@@ -1,6 +1,6 @@
 [package]
 name = "apple-matting-cli"
-version = "0.1.0"
+version = "0.2.0"
 description = "Local background removal CLI and HTTP service powered by macOS Vision"
 authors = ["XIAOBIN"]
 edition = "2021"

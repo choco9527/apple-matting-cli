@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-use crate::matting::perform_matting;
+use crate::matting::{perform_matting, Background};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BatchResult {
@@ -25,6 +25,7 @@ pub fn perform_batch(
     input_dir: &str,
     output_dir: &str,
     crop_to_subject: bool,
+    background: Background,
     recursive: bool,
     jobs: usize,
 ) -> Result<BatchSummary, String> {
@@ -43,7 +44,7 @@ pub fn perform_batch(
 
         let input = path_string(&item.input_path)?;
         let output = path_string(&item.output_path)?;
-        perform_matting(&input, Some(&output), crop_to_subject)
+        perform_matting(&input, Some(&output), crop_to_subject, background)
             .map(|_| ())
             .map_err(String::from)
     });

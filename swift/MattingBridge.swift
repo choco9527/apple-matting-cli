@@ -11,6 +11,7 @@ import CoreVideo
 // Parameters:
 //   inputPath  – absolute file path to the source image (UTF-8, null-terminated)
 //   outputPath – absolute file path where the result PNG will be written
+//   background – normalized RGBA components; alpha 0 preserves transparency
 //
 // Returns:
 //   0  -> success
@@ -46,7 +47,11 @@ private enum MattingFailure: Int32, Error {
 public func mattingProcessImage(
     inputPath: UnsafePointer<CChar>,
     outputPath: UnsafePointer<CChar>,
-    cropToSubject: Bool
+    cropToSubject: Bool,
+    backgroundRed: Float,
+    backgroundGreen: Float,
+    backgroundBlue: Float,
+    backgroundAlpha: Float
 ) -> Int32 {
     guard #available(macOS 14.0, *) else { return -99 }
 
@@ -55,7 +60,13 @@ public func mattingProcessImage(
             try processImage(
                 input: String(cString: inputPath),
                 output: String(cString: outputPath),
-                cropToSubject: cropToSubject
+                cropToSubject: cropToSubject,
+                backgroundColor: backgroundColor(
+                    red: backgroundRed,
+                    green: backgroundGreen,
+                    blue: backgroundBlue,
+                    alpha: backgroundAlpha
+                )
             )
             return 0
         } catch let failure as MattingFailure {
@@ -67,7 +78,12 @@ public func mattingProcessImage(
 }
 
 @available(macOS 14.0, *)
-private func processImage(input: String, output: String, cropToSubject: Bool) throws {
+private func processImage(
+    input: String,
+    output: String,
+    cropToSubject: Bool,
+    backgroundColor: CIColor?
+) throws {
     let inputURL = try resolveInputURL(input)
     guard let inputImage = CIImage(contentsOf: inputURL) else {
         throw MattingFailure.loadFailed
@@ -75,7 +91,11 @@ private func processImage(input: String, output: String, cropToSubject: Bool) th
     warnForLargeImage(inputImage, path: input)
 
     let maskBuffer = try generateForegroundMask(inputImage)
-    let outputImage = try blendForeground(inputImage, maskBuffer: maskBuffer)
+    let outputImage = try blendForeground(
+        inputImage,
+        maskBuffer: maskBuffer,
+        backgroundColor: backgroundColor
+    )
     let finalImage = try cropIfNeeded(outputImage, maskBuffer: maskBuffer, enabled: cropToSubject)
     try writePNG(finalImage, output: output)
 }
@@ -110,14 +130,31 @@ private func generateForegroundMask(_ inputImage: CIImage) throws -> CVPixelBuff
     }
 }
 
-private func blendForeground(_ inputImage: CIImage, maskBuffer: CVPixelBuffer) throws -> CIImage {
+private func backgroundColor(red: Float, green: Float, blue: Float, alpha: Float) -> CIColor? {
+    guard alpha > 0 else { return nil }
+    return CIColor(
+        red: CGFloat(red),
+        green: CGFloat(green),
+        blue: CGFloat(blue),
+        alpha: CGFloat(alpha)
+    )
+}
+
+private func blendForeground(
+    _ inputImage: CIImage,
+    maskBuffer: CVPixelBuffer,
+    backgroundColor: CIColor?
+) throws -> CIImage {
     let maskImage = CIImage(cvPixelBuffer: maskBuffer)
     guard let blendFilter = CIFilter(name: "CIBlendWithMask") else {
         throw MattingFailure.blendFailed
     }
+    let backgroundImage = backgroundColor.map {
+        CIImage(color: $0).cropped(to: inputImage.extent)
+    } ?? CIImage.empty()
     blendFilter.setValue(inputImage,       forKey: kCIInputImageKey)
     blendFilter.setValue(maskImage,        forKey: kCIInputMaskImageKey)
-    blendFilter.setValue(CIImage.empty(),  forKey: kCIInputBackgroundImageKey)
+    blendFilter.setValue(backgroundImage,  forKey: kCIInputBackgroundImageKey)
     guard let outputImage = blendFilter.outputImage else {
         throw MattingFailure.blendFailed
     }

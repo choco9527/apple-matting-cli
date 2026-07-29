@@ -63,11 +63,15 @@ apple-matting-cli input.jpg output.png
 apple-matting-cli input.jpg -o output.png
 apple-matting-cli input.jpg --output output.png
 apple-matting-cli input.jpg --crop -o output.png
+apple-matting-cli input.jpg --background white -o output.png
+apple-matting-cli input.jpg --background "#FFCC00" -o output.png
 ```
 
 When no output path is supplied, the result is written beside the input as
-`input_nobg.png`. All results are transparent PNG files. `--crop` trims the
-image to the detected foreground bounds.
+`input_nobg.png`. The background is transparent by default. `--background`
+accepts `transparent`, `white`, `black`, or a quoted `#RRGGBB` color. All
+results are PNG files. `--crop` trims the image to the detected foreground
+bounds.
 
 ## Batch usage
 
@@ -75,6 +79,7 @@ image to the detected foreground bounds.
 apple-matting-cli --batch ./input -o ./output
 apple-matting-cli --batch ./input -o ./output --recursive
 apple-matting-cli --batch ./input -o ./output --crop --recursive --jobs 3
+apple-matting-cli --batch ./input -o ./output --background white --jobs 3
 ```
 
 Batch behavior:
@@ -84,6 +89,7 @@ Batch behavior:
 - Processes only the top level unless `--recursive` is supplied.
 - Preserves relative subdirectories in recursive mode.
 - Uses three workers by default; `--jobs` accepts values from 1 to 64.
+- Applies one `--background` value to the entire batch; transparent is the default.
 - Continues after individual image failures.
 - Prints successful output paths to stdout and errors plus the final summary to stderr.
 - Returns `0` when every image succeeds and `1` when any image fails.
@@ -107,8 +113,10 @@ curl -X POST -F "file=@input.jpg" \
   http://127.0.0.1:8080/matting --output output.png
 ```
 
-Add `-F "crop=true"` to crop the response to the foreground bounds. Successful
-responses use `Content-Type: image/png`; matting failures return HTTP `422`.
+Add `-F "crop=true"` to crop the response to the foreground bounds. Add
+`-F "background=#FFFFFF"` to use a solid background. Successful responses use
+`Content-Type: image/png`; invalid background values return HTTP `400`, and
+matting failures return HTTP `422`.
 
 The server listens on `0.0.0.0` and enables permissive CORS. It has no built-in
 authentication, upload-size limit, rate limit, queue, or global concurrency
@@ -139,8 +147,8 @@ count, and removes all generated files when it exits.
 
 ```text
 Usage:
-  apple-matting-cli <input-image> [-o|--output <output-png>] [--crop]
-  apple-matting-cli --batch <input-dir> -o <output-dir> [--crop] [--recursive] [--jobs <count>]
+  apple-matting-cli <input-image> [-o|--output <output-png>] [--crop] [--background <color>]
+  apple-matting-cli --batch <input-dir> -o <output-dir> [--crop] [--background <color>] [--recursive] [--jobs <count>]
   apple-matting-cli --server [--port <port>]
   apple-matting-cli --version
 ```
