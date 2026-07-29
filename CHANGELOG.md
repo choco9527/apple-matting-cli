@@ -14,3 +14,9 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Batch directory processing with recursion and bounded concurrency.
 - Local multipart HTTP endpoint at `POST /matting`.
 - Chinese and English usage documentation.
+
+### Changed
+
+- Reuse a Core Image render context and drain autoreleased native objects after
+  every image to keep long batch jobs memory-bounded.
+- Warn when processing images above 32 megapixels.

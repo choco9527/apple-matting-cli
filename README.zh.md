@@ -57,6 +57,8 @@ apple-matting-cli --batch ./input -o ./output --crop --recursive --jobs 3
 - 成功输出路径写入 stdout，错误和最终汇总写入 stderr。
 - 全部成功返回退出码 `0`；任意图片失败返回 `1`。
 - 多张输入映射到同一个 PNG 结果时，会在开始前拒绝处理。
+- 输入图片超过 3200 万像素时会输出内存压力警告。系统响应变慢时可以降低
+  `--jobs`，但图片尺寸才是内存占用的主要因素。
 
 ## 本地 HTTP 服务
 
@@ -85,6 +87,18 @@ curl -X POST -F "file=@input.jpg" \
 | `0` | 成功 |
 | `1` | 抠图、批量、文件或服务错误 |
 | `2` | 命令参数错误 |
+
+## 批量性能基准
+
+正式发布前可以执行可重复的本地基准：
+
+```bash
+scripts/benchmark-batch.sh ./sample.png
+```
+
+默认测试 100 张 4000×4000 图片和三个工作线程。可以通过 `BENCHMARK_COUNT`、
+`BENCHMARK_SIZE`、`BENCHMARK_JOBS` 调整规模。脚本会使用临时目录，输出 macOS
+耗时和内存指标，校验结果数量，并在退出时自动删除生成文件。
 
 ## 完整命令形式
 

@@ -60,6 +60,9 @@ Batch behavior:
 - Prints successful output paths to stdout and errors plus the final summary to stderr.
 - Returns `0` when every image succeeds and `1` when any image fails.
 - Rejects ambiguous inputs that map to the same PNG output path.
+- Warns when an input exceeds 32 megapixels because very large images can cause
+  substantial temporary memory pressure. Lower `--jobs` if the system becomes
+  unresponsive, but note that image size is the dominant memory factor.
 
 ## Local HTTP service
 
@@ -90,6 +93,19 @@ limit. Keep it on a trusted network or place it behind an authenticated proxy.
 | `0` | Success |
 | `1` | Matting, batch, file, or server failure |
 | `2` | Invalid command-line arguments |
+
+## Batch performance benchmark
+
+Run the repeatable local benchmark before a release:
+
+```bash
+scripts/benchmark-batch.sh ./sample.png
+```
+
+It defaults to 100 images at 4000×4000 with three workers. Override the workload
+with `BENCHMARK_COUNT`, `BENCHMARK_SIZE`, and `BENCHMARK_JOBS`. The script uses a
+temporary directory, reports macOS timing and memory metrics, verifies the output
+count, and removes all generated files when it exits.
 
 ## Supported commands
 

@@ -21,7 +21,25 @@ import CoreVideo
 //  -5  -> blend filter produced no output
 //  -6  -> failed to write output PNG
 //  -7  -> failed to calculate crop bounds
-//  -99 -> macOS version too old (requires 12.0+)
+//  -99 -> macOS version too old (requires 14.0+)
+
+private let outputColorSpace = CGColorSpaceCreateDeviceRGB()
+// CIContext is expensive to construct and safe to reuse for concurrent renders.
+private let sharedRenderContext = CIContext(options: [
+    .workingColorSpace: outputColorSpace,
+    .cacheIntermediates: false,
+])
+private let recommendedMaxPixels: CGFloat = 32_000_000
+
+private enum MattingFailure: Int32, Error {
+    case loadFailed = -1
+    case visionRequestFailed = -2
+    case noForeground = -3
+    case maskFailed = -4
+    case blendFailed = -5
+    case writeFailed = -6
+    case cropBoundsFailed = -7
+}
 
 @available(macOS 14.0, *)
 @_cdecl("matting_process_image")
@@ -32,88 +50,129 @@ public func mattingProcessImage(
 ) -> Int32 {
     guard #available(macOS 14.0, *) else { return -99 }
 
-    let input  = String(cString: inputPath)
-    let output = String(cString: outputPath)
-
-    // Build a file URL from the raw path string
-    let inputURL: URL
-    if input.hasPrefix("file://") {
-        guard let u = URL(string: input) else { return -1 }
-        inputURL = u
-    } else {
-        inputURL = URL(fileURLWithPath: input)
+    return autoreleasepool {
+        do {
+            try processImage(
+                input: String(cString: inputPath),
+                output: String(cString: outputPath),
+                cropToSubject: cropToSubject
+            )
+            return 0
+        } catch let failure as MattingFailure {
+            return failure.rawValue
+        } catch {
+            return MattingFailure.visionRequestFailed.rawValue
+        }
     }
+}
 
-    guard let ciImage = CIImage(contentsOf: inputURL) else { return -1 }
+@available(macOS 14.0, *)
+private func processImage(input: String, output: String, cropToSubject: Bool) throws {
+    let inputURL = try resolveInputURL(input)
+    guard let inputImage = CIImage(contentsOf: inputURL) else {
+        throw MattingFailure.loadFailed
+    }
+    warnForLargeImage(inputImage, path: input)
 
-    // --- Vision: foreground instance mask ---
+    let maskBuffer = try generateForegroundMask(inputImage)
+    let outputImage = try blendForeground(inputImage, maskBuffer: maskBuffer)
+    let finalImage = try cropIfNeeded(outputImage, maskBuffer: maskBuffer, enabled: cropToSubject)
+    try writePNG(finalImage, output: output)
+}
+
+private func resolveInputURL(_ input: String) throws -> URL {
+    if input.hasPrefix("file://") {
+        guard let url = URL(string: input) else { throw MattingFailure.loadFailed }
+        return url
+    }
+    return URL(fileURLWithPath: input)
+}
+
+@available(macOS 14.0, *)
+private func generateForegroundMask(_ inputImage: CIImage) throws -> CVPixelBuffer {
     let request = VNGenerateForegroundInstanceMaskRequest()
-    let handler = VNImageRequestHandler(ciImage: ciImage, options: [:])
+    let handler = VNImageRequestHandler(ciImage: inputImage, options: [:])
 
     do {
         try handler.perform([request])
     } catch {
-        return -2
+        throw MattingFailure.visionRequestFailed
     }
 
-    guard let result = request.results?.first else { return -3 }
-
-    let maskBuffer: CVPixelBuffer
+    guard let result = request.results?.first else { throw MattingFailure.noForeground }
     do {
-        maskBuffer = try result.generateScaledMaskForImage(
+        return try result.generateScaledMaskForImage(
             forInstances: result.allInstances,
             from: handler
         )
     } catch {
-        return -4
+        throw MattingFailure.maskFailed
     }
+}
 
-    // --- CIFilter: blend foreground over transparent background ---
+private func blendForeground(_ inputImage: CIImage, maskBuffer: CVPixelBuffer) throws -> CIImage {
     let maskImage = CIImage(cvPixelBuffer: maskBuffer)
-
-    guard let blendFilter = CIFilter(name: "CIBlendWithMask") else { return -5 }
-    blendFilter.setValue(ciImage,          forKey: kCIInputImageKey)
+    guard let blendFilter = CIFilter(name: "CIBlendWithMask") else {
+        throw MattingFailure.blendFailed
+    }
+    blendFilter.setValue(inputImage,       forKey: kCIInputImageKey)
     blendFilter.setValue(maskImage,        forKey: kCIInputMaskImageKey)
     blendFilter.setValue(CIImage.empty(),  forKey: kCIInputBackgroundImageKey)
-
-    guard let outputImage = blendFilter.outputImage else { return -5 }
-
-    // --- Optional: crop to subject bounding box ---
-    var finalImage = outputImage
-    if cropToSubject {
-        guard let cropRect = subjectCropRect(
-            from: maskBuffer,
-            imageExtent: outputImage.extent,
-            paddingRatio: 0
-        ) else {
-            return -7
-        }
-
-        let cropped = finalImage.cropped(to: cropRect)
-        finalImage = cropped.transformed(
-            by: CGAffineTransform(
-                translationX: -cropped.extent.origin.x,
-                y: -cropped.extent.origin.y
-            )
-        )
+    guard let outputImage = blendFilter.outputImage else {
+        throw MattingFailure.blendFailed
     }
+    return outputImage
+}
 
-    // --- Write RGBA PNG ---
-    let context = CIContext(options: [.workingColorSpace: CGColorSpaceCreateDeviceRGB()])
-    let outputURL = URL(fileURLWithPath: output)
+@available(macOS 14.0, *)
+private func cropIfNeeded(
+    _ image: CIImage,
+    maskBuffer: CVPixelBuffer,
+    enabled: Bool
+) throws -> CIImage {
+    guard enabled else { return image }
+    guard let cropRect = subjectCropRect(
+        from: maskBuffer,
+        imageExtent: image.extent,
+        paddingRatio: 0
+    ) else {
+        throw MattingFailure.cropBoundsFailed
+    }
+    let cropped = image.cropped(to: cropRect)
+    return cropped.transformed(
+        by: CGAffineTransform(
+            translationX: -cropped.extent.origin.x,
+            y: -cropped.extent.origin.y
+        )
+    )
+}
 
+private func writePNG(_ image: CIImage, output: String) throws {
     do {
-        try context.writePNGRepresentation(
-            of: finalImage,
-            to: outputURL,
+        try sharedRenderContext.writePNGRepresentation(
+            of: image,
+            to: URL(fileURLWithPath: output),
             format: .RGBA8,
-            colorSpace: CGColorSpaceCreateDeviceRGB()
+            colorSpace: outputColorSpace
         )
     } catch {
-        return -6
+        throw MattingFailure.writeFailed
     }
+}
 
-    return 0
+private func warnForLargeImage(_ image: CIImage, path: String) {
+    let extent = image.extent
+    guard extent.width.isFinite, extent.height.isFinite else { return }
+    let pixelCount = extent.width * extent.height
+    guard pixelCount > recommendedMaxPixels else { return }
+
+    let megapixels = Double(pixelCount / 1_000_000)
+    let message = String(
+        format: "Warning: %@ is %.1f MP; images above 32 MP may cause high memory pressure.\n",
+        path,
+        megapixels
+    )
+    FileHandle.standardError.write(Data(message.utf8))
 }
 
 @available(macOS 14.0, *)
