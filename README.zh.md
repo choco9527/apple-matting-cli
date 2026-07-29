@@ -21,14 +21,13 @@
 
 <https://brew.sh/>
 
-然后添加项目维护的第三方 Tap 并安装：
+使用以下命令安装：
 
 ```bash
-brew tap choco9527/tap
-brew install apple-matting-cli
+brew install choco9527/tap/apple-matting-cli
 ```
 
-`choco9527/tap` 由本项目维护，不属于 Homebrew Core 官方 Formula。
+该命令会自动添加 `choco9527/tap`；它由本项目维护，不属于 Homebrew Core 官方 Formula。
 
 ### GitHub Release
 

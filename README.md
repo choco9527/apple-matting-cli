@@ -23,14 +23,14 @@ If Homebrew is not installed, use its official website:
 
 <https://brew.sh/>
 
-Then install this third-party tap and the CLI:
+Install the CLI with:
 
 ```bash
-brew tap choco9527/tap
-brew install apple-matting-cli
+brew install choco9527/tap/apple-matting-cli
 ```
 
-`choco9527/tap` is maintained by this project and is not part of Homebrew Core.
+This command automatically adds `choco9527/tap`, which is maintained by this
+project and is not part of Homebrew Core.
 
 ### GitHub Release
 
