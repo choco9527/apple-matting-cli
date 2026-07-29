@@ -15,6 +15,34 @@ small HTTP service for local integrations.
 Actual matting is macOS-only because it uses
 `VNGenerateForegroundInstanceMaskRequest`.
 
+## Install
+
+### Homebrew
+
+If Homebrew is not installed, use its official website:
+
+<https://brew.sh/>
+
+Then install this third-party tap and the CLI:
+
+```bash
+brew tap choco9527/tap
+brew install apple-matting-cli
+```
+
+`choco9527/tap` is maintained by this project and is not part of Homebrew Core.
+
+### GitHub Release
+
+Download the archive matching your Mac from the
+[GitHub Releases](https://github.com/choco9527/apple-matting-cli/releases) page:
+
+- `macos-arm64` for Apple Silicon
+- `macos-x86_64` for Intel Macs
+
+Verify the archive against `SHA256SUMS`, extract it, and place
+`apple-matting-cli` in a directory on your `PATH`.
+
 ## Build from source
 
 Install the Rust toolchain and Xcode Command Line Tools, then run:
@@ -116,12 +144,6 @@ Usage:
   apple-matting-cli --server [--port <port>]
   apple-matting-cli --version
 ```
-
-## Release status
-
-The standalone repository is under active preparation. Tagged binary releases
-and Homebrew installation will be enabled after the batch workflow and release
-artifacts have completed validation.
 
 ## License
 

@@ -13,6 +13,33 @@
 
 实际抠图依赖 `VNGenerateForegroundInstanceMaskRequest`，因此只支持 macOS。
 
+## 安装
+
+### Homebrew
+
+如果尚未安装 Homebrew，请先访问官方网站：
+
+<https://brew.sh/>
+
+然后添加项目维护的第三方 Tap 并安装：
+
+```bash
+brew tap choco9527/tap
+brew install apple-matting-cli
+```
+
+`choco9527/tap` 由本项目维护，不属于 Homebrew Core 官方 Formula。
+
+### GitHub Release
+
+在 [GitHub Releases](https://github.com/choco9527/apple-matting-cli/releases)
+下载与 Mac 架构对应的压缩包：
+
+- Apple Silicon 使用 `macos-arm64`
+- Intel Mac 使用 `macos-x86_64`
+
+使用 `SHA256SUMS` 校验压缩包，解压后将 `apple-matting-cli` 放入 `PATH` 目录。
+
 ## 从源码构建
 
 安装 Rust 工具链和 Xcode Command Line Tools 后执行：
@@ -109,11 +136,6 @@ Usage:
   apple-matting-cli --server [--port <port>]
   apple-matting-cli --version
 ```
-
-## 发布状态
-
-独立仓库仍在完善中。批量流程和发行产物完成验证后，才会开放带标签的二进制 Release
-和 Homebrew 安装。
 
 ## 许可证
 
