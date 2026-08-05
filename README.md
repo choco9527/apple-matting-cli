@@ -1,51 +1,47 @@
 # apple-matting-cli
 
-[中文说明](./README.zh.md)
+[English](./README.en.md)
 
-Local background removal for macOS, powered by Apple Vision and Core Image.
-The project provides a one-shot CLI, a bounded-concurrency batch command, and a
-small HTTP service for local integrations.
+基于 Apple Vision 和 Core Image 的 macOS 本地抠图工具，提供单图命令、有限并发的
+批量命令，以及供本地程序调用的 HTTP 服务。
 
-## Requirements
+## 系统要求
 
-- macOS 14.0 or later
-- Apple Silicon or Intel Mac
-- No cloud API or model download is required
+- macOS 14.0 或更高版本
+- Apple Silicon 或 Intel Mac
+- 不需要云端 API，也不需要下载模型
 
-Actual matting is macOS-only because it uses
-`VNGenerateForegroundInstanceMaskRequest`.
+实际抠图依赖 `VNGenerateForegroundInstanceMaskRequest`，因此只支持 macOS。
 
-## Install
+## 安装
 
 ### Homebrew
 
-If Homebrew is not installed, use its official website:
+如果尚未安装 Homebrew，请先访问官方网站：
 
 <https://brew.sh/>
 
-Install the CLI with:
+使用以下命令安装：
 
 ```bash
 brew install choco9527/tap/apple-matting-cli
 ```
 
-This command automatically adds `choco9527/tap`, which is maintained by this
-project and is not part of Homebrew Core.
+该命令会自动添加 `choco9527/tap`；它由本项目维护，不属于 Homebrew Core 官方 Formula。
 
 ### GitHub Release
 
-Download the archive matching your Mac from the
-[GitHub Releases](https://github.com/choco9527/apple-matting-cli/releases) page:
+在 [GitHub Releases](https://github.com/choco9527/apple-matting-cli/releases)
+下载与 Mac 架构对应的压缩包：
 
-- `macos-arm64` for Apple Silicon
-- `macos-x86_64` for Intel Macs
+- Apple Silicon 使用 `macos-arm64`
+- Intel Mac 使用 `macos-x86_64`
 
-Verify the archive against `SHA256SUMS`, extract it, and place
-`apple-matting-cli` in a directory on your `PATH`.
+使用 `SHA256SUMS` 校验压缩包，解压后将 `apple-matting-cli` 放入 `PATH` 目录。
 
-## Build from source
+## 从源码构建
 
-Install the Rust toolchain and Xcode Command Line Tools, then run:
+安装 Rust 工具链和 Xcode Command Line Tools 后执行：
 
 ```bash
 cargo test --locked
@@ -53,9 +49,9 @@ cargo build --release --locked --bin apple-matting-cli
 ./target/release/apple-matting-cli --help
 ```
 
-The release binary is written to `target/release/apple-matting-cli`.
+最终二进制位于 `target/release/apple-matting-cli`。
 
-## Single-image usage
+## 单图处理
 
 ```bash
 apple-matting-cli input.jpg
@@ -67,13 +63,11 @@ apple-matting-cli input.jpg --background white -o output.png
 apple-matting-cli input.jpg --background "#FFCC00" -o output.png
 ```
 
-When no output path is supplied, the result is written beside the input as
-`input_nobg.png`. The background is transparent by default. `--background`
-accepts `transparent`, `white`, `black`, or a quoted `#RRGGBB` color. All
-results are PNG files. `--crop` trims the image to the detected foreground
-bounds.
+没有指定输出路径时，会在原图旁生成 `input_nobg.png`。背景默认透明；
+`--background` 支持 `transparent`、`white`、`black` 或带引号的 `#RRGGBB`
+颜色。所有结果均为 PNG；`--crop` 会把结果裁剪到检测到的前景边界。
 
-## Batch usage
+## 批量处理
 
 ```bash
 apple-matting-cli --batch ./input -o ./output
@@ -82,68 +76,63 @@ apple-matting-cli --batch ./input -o ./output --crop --recursive --jobs 3
 apple-matting-cli --batch ./input -o ./output --background white --jobs 3
 ```
 
-Batch behavior:
+批量行为：
 
-- Supports JPG, JPEG, PNG, WEBP, and BMP input files.
-- Requires a separate output directory and never writes into the input tree.
-- Processes only the top level unless `--recursive` is supplied.
-- Preserves relative subdirectories in recursive mode.
-- Uses three workers by default; `--jobs` accepts values from 1 to 64.
-- Applies one `--background` value to the entire batch; transparent is the default.
-- Continues after individual image failures.
-- Prints successful output paths to stdout and errors plus the final summary to stderr.
-- Returns `0` when every image succeeds and `1` when any image fails.
-- Rejects ambiguous inputs that map to the same PNG output path.
-- Warns when an input exceeds 32 megapixels because very large images can cause
-  substantial temporary memory pressure. Lower `--jobs` if the system becomes
-  unresponsive, but note that image size is the dominant memory factor.
+- 支持 JPG、JPEG、PNG、WEBP、BMP。
+- 强制使用独立输出目录，不会写入输入目录树。
+- 默认只处理目录第一层；添加 `--recursive` 后递归处理。
+- 递归模式下保留相对目录结构。
+- 默认三个工作线程，`--jobs` 允许 1 到 64。
+- 整批任务只需设置一次 `--background`，默认透明。
+- 单张失败不会中断整批任务。
+- 成功输出路径写入 stdout，错误和最终汇总写入 stderr。
+- 全部成功返回退出码 `0`；任意图片失败返回 `1`。
+- 多张输入映射到同一个 PNG 结果时，会在开始前拒绝处理。
+- 输入图片超过 3200 万像素时会输出内存压力警告。系统响应变慢时可以降低
+  `--jobs`，但图片尺寸才是内存占用的主要因素。
 
-## Local HTTP service
+## 本地 HTTP 服务
 
-Start the service:
+启动服务：
 
 ```bash
 apple-matting-cli --server --port 8080
 ```
 
-Upload one image using multipart field `file`:
+通过 multipart 字段 `file` 上传单张图片：
 
 ```bash
 curl -X POST -F "file=@input.jpg" \
   http://127.0.0.1:8080/matting --output output.png
 ```
 
-Add `-F "crop=true"` to crop the response to the foreground bounds. Add
-`-F "background=#FFFFFF"` to use a solid background. Successful responses use
-`Content-Type: image/png`; invalid background values return HTTP `400`, and
-matting failures return HTTP `422`.
+添加 `-F "crop=true"` 可裁剪主体，添加 `-F "background=#FFFFFF"` 可设置纯色背景。
+成功响应为 `image/png`；背景颜色无效时返回 HTTP `400`，抠图失败返回 HTTP `422`。
 
-The server listens on `0.0.0.0` and enables permissive CORS. It has no built-in
-authentication, upload-size limit, rate limit, queue, or global concurrency
-limit. Keep it on a trusted network or place it behind an authenticated proxy.
+服务监听 `0.0.0.0` 并开放 CORS，目前没有内置鉴权、上传大小限制、限流、队列或
+全局并发控制。只应在可信网络使用，公网部署必须放在带鉴权和限流的代理后面。
 
-## Exit codes
+## 退出码
 
-| Code | Meaning |
+| 退出码 | 含义 |
 | ---: | --- |
-| `0` | Success |
-| `1` | Matting, batch, file, or server failure |
-| `2` | Invalid command-line arguments |
+| `0` | 成功 |
+| `1` | 抠图、批量、文件或服务错误 |
+| `2` | 命令参数错误 |
 
-## Batch performance benchmark
+## 批量性能基准
 
-Run the repeatable local benchmark before a release:
+正式发布前可以执行可重复的本地基准：
 
 ```bash
 scripts/benchmark-batch.sh ./sample.png
 ```
 
-It defaults to 100 images at 4000×4000 with three workers. Override the workload
-with `BENCHMARK_COUNT`, `BENCHMARK_SIZE`, and `BENCHMARK_JOBS`. The script uses a
-temporary directory, reports macOS timing and memory metrics, verifies the output
-count, and removes all generated files when it exits.
+默认测试 100 张 4000×4000 图片和三个工作线程。可以通过 `BENCHMARK_COUNT`、
+`BENCHMARK_SIZE`、`BENCHMARK_JOBS` 调整规模。脚本会使用临时目录，输出 macOS
+耗时和内存指标，校验结果数量，并在退出时自动删除生成文件。
 
-## Supported commands
+## 完整命令形式
 
 ```text
 Usage:
@@ -153,6 +142,6 @@ Usage:
   apple-matting-cli --version
 ```
 
-## License
+## 许可证
 
-Licensed under [GPL-3.0-only](./LICENSE).
+使用 [GPL-3.0-only](./LICENSE) 发布。

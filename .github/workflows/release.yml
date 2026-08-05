@@ -47,7 +47,7 @@ jobs:
           package="apple-matting-cli-${GITHUB_REF_NAME}-macos-${{ matrix.archive_arch }}"
           mkdir -p "$package"
           cp "target/${{ matrix.target }}/release/apple-matting-cli" "$package/"
-          cp README.md README.zh.md LICENSE "$package/"
+          cp README.md README.en.md LICENSE "$package/"
           tar -czf "$package.tar.gz" "$package"
           shasum -a 256 "$package.tar.gz" > "$package.tar.gz.sha256"
       - uses: actions/upload-artifact@v4
