@@ -5,6 +5,7 @@
 Local background removal for macOS, powered by Apple Vision and Core Image.
 The project provides a one-shot CLI, a bounded-concurrency batch command, and a
 small HTTP service for local integrations.
+It also provides on-device OCR through Apple Vision.
 
 ## Requirements
 
@@ -98,6 +99,42 @@ Batch behavior:
   substantial temporary memory pressure. Lower `--jobs` if the system becomes
   unresponsive, but note that image size is the dominant memory factor.
 
+## OCR
+
+OCR stays on the Mac and uses the Vision framework for images and PDFs. PDFs are
+rendered and recognized page by page. It tries Simplified Chinese and English by
+default, then writes `input_ocr.txt` next to the input file:
+
+```bash
+apple-matting-cli ocr input.png
+apple-matting-cli ocr invoice.pdf
+apple-matting-cli ocr input.png --lang zh-Hans,en-US
+apple-matting-cli ocr input.png --format json -o result.json
+```
+
+`--lang` accepts comma-separated Apple language codes such as `zh-Hans`,
+`zh-Hant`, `en-US`, and `ja-JP`. `--format text` (the default) writes plain text;
+`--format json` writes the full text and a `text`, `confidence`, and `boundingBox`
+for each recognized item. Coordinates are normalized Vision coordinates
+`[x, y, width, height]` with their origin at the lower-left of the image. PDF
+items additionally contain a one-based `page`; multi-page plain-text output uses
+`Page N` separators.
+To keep memory bounded, PDFs are limited to 200 pages and 32 megapixels per
+rendered page. Pages are rendered, recognized, and released one at a time rather
+than retaining every page bitmap in memory.
+
+```json
+{
+  "text": "Example text",
+  "items": [{
+    "page": 1,
+    "text": "Example text",
+    "confidence": 0.98,
+    "boundingBox": [0.1, 0.2, 0.4, 0.05]
+  }]
+}
+```
+
 ## Local HTTP service
 
 Start the service:
@@ -117,6 +154,19 @@ Add `-F "crop=true"` to crop the response to the foreground bounds. Add
 `-F "background=#FFFFFF"` to use a solid background. Successful responses use
 `Content-Type: image/png`; invalid background values return HTTP `400`, and
 matting failures return HTTP `422`.
+
+OCR is available at `POST /ocr`, again using multipart field `file` for an image
+or PDF:
+
+```bash
+curl -X POST -F "file=@input.png" -F "lang=zh-Hans,en-US" \
+  -F "format=json" http://127.0.0.1:8080/ocr --output result.json
+```
+
+The default response is `text/plain; charset=utf-8`; `format=json` returns
+`application/json; charset=utf-8`. An empty language value or invalid format returns
+HTTP `400`; unsupported Vision language configurations and recognition failures return
+HTTP `422`.
 
 The server listens on `0.0.0.0` and enables permissive CORS. It has no built-in
 authentication, upload-size limit, rate limit, queue, or global concurrency
@@ -149,6 +199,7 @@ count, and removes all generated files when it exits.
 Usage:
   apple-matting-cli <input-image> [-o|--output <output-png>] [--crop] [--background <color>]
   apple-matting-cli --batch <input-dir> -o <output-dir> [--crop] [--background <color>] [--recursive] [--jobs <count>]
+  apple-matting-cli ocr <input-image> [-o|--output <output-file>] [--lang <codes>] [--format <text|json>]
   apple-matting-cli --server [--port <port>]
   apple-matting-cli --version
 ```

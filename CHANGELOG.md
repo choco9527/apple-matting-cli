@@ -7,6 +7,27 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-08-18
+
+### Added
+
+- On-device OCR for images and PDFs through `apple-matting-cli ocr`.
+- Plain-text and JSON OCR output, including recognized text confidence, normalized
+  bounding boxes, and PDF page numbers.
+- Local multipart HTTP endpoint at `POST /ocr`.
+
+### Changed
+
+- Process PDF pages one at a time and enforce PDF page and pixel limits to keep
+  OCR memory bounded.
+
+## [0.2.0] - 2026-07-29
+
+### Added
+
+- Configurable transparent, named, and `#RRGGBB` solid backgrounds for single,
+  batch, and HTTP matting.
+
 ## [0.1.0] - 2026-07-29
 
 ### Added

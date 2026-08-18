@@ -4,6 +4,7 @@
 
 基于 Apple Vision 和 Core Image 的 macOS 本地抠图工具，提供单图命令、有限并发的
 批量命令，以及供本地程序调用的 HTTP 服务。
+同样支持使用 Apple Vision 在本机完成 OCR 文字识别。
 
 ## 系统要求
 
@@ -91,6 +92,37 @@ apple-matting-cli --batch ./input -o ./output --background white --jobs 3
 - 输入图片超过 3200 万像素时会输出内存压力警告。系统响应变慢时可以降低
   `--jobs`，但图片尺寸才是内存占用的主要因素。
 
+## OCR 文字识别
+
+OCR 不上传数据，直接使用 macOS Vision 框架识别图片或 PDF 中的文字。PDF 会自动逐页
+渲染后识别；默认同时尝试简体中文和英语，并输出与输入文件同目录的 `input_ocr.txt`：
+
+```bash
+apple-matting-cli ocr input.png
+apple-matting-cli ocr invoice.pdf
+apple-matting-cli ocr input.png --lang zh-Hans,en-US
+apple-matting-cli ocr input.png --format json -o result.json
+```
+
+`--lang` 接受以逗号分隔的 Apple 语言代码，例如 `zh-Hans`、`zh-Hant`、`en-US`、`ja-JP`。
+`--format text`（默认）只输出文本；`--format json` 输出全文及每段文字的 `text`、`confidence`、
+`boundingBox`。坐标为 Vision 的归一化坐标 `[x, y, width, height]`，原点位于图片左下角；
+PDF 的每项额外带有从 1 开始的 `page`。多页 PDF 的纯文本会以 `Page N` 分隔。
+为保证内存稳定性，PDF 最多处理 200 页，且每页渲染后的像素数不得超过 3200 万；处理时
+按页渲染、识别和释放，不会将所有页面位图同时保留在内存中。
+
+```json
+{
+  "text": "示例文字",
+  "items": [{
+    "page": 1,
+    "text": "示例文字",
+    "confidence": 0.98,
+    "boundingBox": [0.1, 0.2, 0.4, 0.05]
+  }]
+}
+```
+
 ## 本地 HTTP 服务
 
 启动服务：
@@ -108,6 +140,17 @@ curl -X POST -F "file=@input.jpg" \
 
 添加 `-F "crop=true"` 可裁剪主体，添加 `-F "background=#FFFFFF"` 可设置纯色背景。
 成功响应为 `image/png`；背景颜色无效时返回 HTTP `400`，抠图失败返回 HTTP `422`。
+
+OCR 使用 `POST /ocr`，同样以 multipart 字段 `file` 上传图片或 PDF：
+
+```bash
+curl -X POST -F "file=@input.png" -F "lang=zh-Hans,en-US" \
+  -F "format=json" http://127.0.0.1:8080/ocr --output result.json
+```
+
+默认响应为 `text/plain; charset=utf-8`；传入 `format=json` 时为
+`application/json; charset=utf-8`。空语言或无效格式返回 HTTP `400`；Vision 不支持的
+语言配置或识别失败返回 HTTP `422`。
 
 服务监听 `0.0.0.0` 并开放 CORS，目前没有内置鉴权、上传大小限制、限流、队列或
 全局并发控制。只应在可信网络使用，公网部署必须放在带鉴权和限流的代理后面。
@@ -138,6 +181,7 @@ scripts/benchmark-batch.sh ./sample.png
 Usage:
   apple-matting-cli <input-image> [-o|--output <output-png>] [--crop] [--background <color>]
   apple-matting-cli --batch <input-dir> -o <output-dir> [--crop] [--background <color>] [--recursive] [--jobs <count>]
+  apple-matting-cli ocr <input-image> [-o|--output <output-file>] [--lang <codes>] [--format <text|json>]
   apple-matting-cli --server [--port <port>]
   apple-matting-cli --version
 ```

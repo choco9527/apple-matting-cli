@@ -11,6 +11,7 @@ use tower_http::cors::CorsLayer;
 
 use crate::batch::{perform_batch, BatchSummary};
 use crate::matting::{perform_matting, Background};
+use crate::ocr::{normalize_languages, perform_ocr, OcrFormat, DEFAULT_LANGUAGES};
 
 const DEFAULT_SERVER_PORT: u16 = 8080;
 const DEFAULT_BATCH_JOBS: usize = 3;
@@ -18,6 +19,7 @@ const MAX_BATCH_JOBS: usize = 64;
 const USAGE: &str = "Usage:
   apple-matting-cli <input-image> [-o|--output <output-png>] [--crop] [--background <color>]
   apple-matting-cli --batch <input-dir> -o <output-dir> [--crop] [--background <color>] [--recursive] [--jobs <count>]
+  apple-matting-cli ocr <input-image> [-o|--output <output-file>] [--lang <codes>] [--format <text|json>]
   apple-matting-cli --server [--port <port>]
   apple-matting-cli --version";
 
@@ -32,6 +34,12 @@ pub enum CliArgs {
         background: Background,
         recursive: bool,
         jobs: usize,
+    },
+    Ocr {
+        input_path: String,
+        output_path: Option<String>,
+        languages: String,
+        format: OcrFormat,
     },
     Run {
         input_path: String,
@@ -53,6 +61,10 @@ pub fn parse_args(args: &[String]) -> Result<CliArgs, String> {
         return Ok(CliArgs::Version);
     }
 
+    if args.get(1).is_some_and(|arg| arg == "ocr") {
+        return parse_ocr_args(args);
+    }
+
     let has_server = args.iter().skip(1).any(|arg| arg == "--server");
     let has_batch = args.iter().skip(1).any(|arg| arg == "--batch");
     if has_server && has_batch {
@@ -66,6 +78,52 @@ pub fn parse_args(args: &[String]) -> Result<CliArgs, String> {
     }
 
     parse_run_args(args)
+}
+
+fn parse_ocr_args(args: &[String]) -> Result<CliArgs, String> {
+    let mut input_path = None;
+    let mut output_path = None;
+    let mut languages = None;
+    let mut format = None;
+    let mut index = 2;
+
+    while index < args.len() {
+        match args[index].as_str() {
+            "-o" | "--output" => {
+                if output_path.replace(option_value(args, index)?).is_some() {
+                    return Err(USAGE.to_string());
+                }
+                index += 2;
+            }
+            "--lang" => {
+                let value = normalize_languages(&option_value(args, index)?)?;
+                if languages.replace(value).is_some() {
+                    return Err(USAGE.to_string());
+                }
+                index += 2;
+            }
+            "--format" => {
+                let value = OcrFormat::parse(&option_value(args, index)?)?;
+                if format.replace(value).is_some() {
+                    return Err(USAGE.to_string());
+                }
+                index += 2;
+            }
+            arg if arg.starts_with('-') => return Err(USAGE.to_string()),
+            value if input_path.is_none() => {
+                input_path = Some(value.to_string());
+                index += 1;
+            }
+            _ => return Err(USAGE.to_string()),
+        }
+    }
+
+    Ok(CliArgs::Ocr {
+        input_path: input_path.ok_or_else(|| USAGE.to_string())?,
+        output_path,
+        languages: languages.unwrap_or_else(|| DEFAULT_LANGUAGES.to_string()),
+        format: format.unwrap_or_default(),
+    })
 }
 
 fn parse_run_args(args: &[String]) -> Result<CliArgs, String> {
@@ -261,6 +319,21 @@ pub async fn run(args: Vec<String>) -> i32 {
                 1
             }
         },
+        Ok(CliArgs::Ocr {
+            input_path,
+            output_path,
+            languages,
+            format,
+        }) => match perform_ocr(&input_path, output_path.as_deref(), &languages, format) {
+            Ok(path) => {
+                println!("{path}");
+                0
+            }
+            Err(error) => {
+                eprintln!("{error}");
+                1
+            }
+        },
         Ok(CliArgs::Run {
             input_path,
             output_path,
@@ -314,6 +387,7 @@ async fn run_server(port: u16) -> Result<(), String> {
     let address = SocketAddr::from(([0, 0, 0, 0], port));
     let app = Router::new()
         .route("/matting", post(handle_matting))
+        .route("/ocr", post(handle_ocr))
         .layer(CorsLayer::permissive());
     let listener = tokio::net::TcpListener::bind(address)
         .await
@@ -323,10 +397,78 @@ async fn run_server(port: u16) -> Result<(), String> {
     eprintln!(
         "POST multipart/form-data to /matting with `file` and optional `crop`/`background` fields"
     );
+    eprintln!("POST multipart/form-data to /ocr with `file` and optional `lang`/`format` fields");
 
     axum::serve(listener, app)
         .await
         .map_err(|error| format!("Server error: {error}"))
+}
+
+async fn handle_ocr(mut multipart: Multipart) -> Result<Response, ApiError> {
+    let mut languages = DEFAULT_LANGUAGES.to_string();
+    let mut format = OcrFormat::Text;
+    let mut uploaded_file = None;
+
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(ApiError::bad_request)?
+    {
+        match field.name().unwrap_or("") {
+            "lang" => {
+                languages =
+                    normalize_languages(&field.text().await.map_err(ApiError::bad_request)?)
+                        .map_err(|message| ApiError::new(StatusCode::BAD_REQUEST, message))?;
+            }
+            "format" => {
+                format = OcrFormat::parse(&field.text().await.map_err(ApiError::bad_request)?)
+                    .map_err(|message| ApiError::new(StatusCode::BAD_REQUEST, message))?;
+            }
+            "file" => {
+                uploaded_file = Some(UploadedFile {
+                    extension: input_extension(field.file_name()),
+                    bytes: field.bytes().await.map_err(ApiError::bad_request)?.to_vec(),
+                });
+            }
+            _ => {}
+        }
+    }
+
+    let uploaded_file = uploaded_file
+        .ok_or_else(|| ApiError::new(StatusCode::BAD_REQUEST, "Missing multipart field `file`"))?;
+    let temp_dir = tempfile::tempdir().map_err(ApiError::internal)?;
+    let input_path = temp_dir
+        .path()
+        .join(format!("input.{}", uploaded_file.extension));
+    let output_path = temp_dir.path().join(format!(
+        "output.{}",
+        if format == OcrFormat::Json {
+            "json"
+        } else {
+            "txt"
+        }
+    ));
+    tokio::fs::write(&input_path, uploaded_file.bytes)
+        .await
+        .map_err(ApiError::internal)?;
+
+    let input = input_path.to_string_lossy().to_string();
+    let output = output_path.to_string_lossy().to_string();
+    let result =
+        tokio::task::spawn_blocking(move || perform_ocr(&input, Some(&output), &languages, format))
+            .await
+            .map_err(ApiError::internal)?;
+    result.map_err(ApiError::matting)?;
+
+    let bytes = tokio::fs::read(&output_path)
+        .await
+        .map_err(ApiError::internal)?;
+    let content_type = if format == OcrFormat::Json {
+        "application/json; charset=utf-8"
+    } else {
+        "text/plain; charset=utf-8"
+    };
+    Ok(([(header::CONTENT_TYPE, content_type)], bytes).into_response())
 }
 
 async fn handle_matting(mut multipart: Multipart) -> Result<Response, ApiError> {
@@ -421,6 +563,7 @@ fn input_extension(file_name: Option<&str>) -> &'static str {
         Some("png") => "png",
         Some("webp") => "webp",
         Some("bmp") => "bmp",
+        Some("pdf") => "pdf",
         _ => "jpg",
     }
 }
@@ -476,6 +619,7 @@ mod background_tests;
 mod tests {
     use super::{parse_args, CliArgs, DEFAULT_BATCH_JOBS, DEFAULT_SERVER_PORT, USAGE};
     use crate::matting::Background;
+    use crate::ocr::{OcrFormat, DEFAULT_LANGUAGES};
 
     #[test]
     fn parses_input_only() {
@@ -724,6 +868,50 @@ mod tests {
         let args = vec!["apple-matting-cli".to_string(), "--version".to_string()];
 
         assert_eq!(parse_args(&args), Ok(CliArgs::Version));
+    }
+
+    #[test]
+    fn parses_ocr_with_defaults() {
+        let args = vec![
+            "apple-matting-cli".to_string(),
+            "ocr".to_string(),
+            "input.png".to_string(),
+        ];
+
+        assert_eq!(
+            parse_args(&args),
+            Ok(CliArgs::Ocr {
+                input_path: "input.png".to_string(),
+                output_path: None,
+                languages: DEFAULT_LANGUAGES.to_string(),
+                format: OcrFormat::Text,
+            })
+        );
+    }
+
+    #[test]
+    fn parses_ocr_json_with_languages() {
+        let args = vec![
+            "apple-matting-cli".to_string(),
+            "ocr".to_string(),
+            "input.png".to_string(),
+            "--lang".to_string(),
+            "zh-Hans, en-US".to_string(),
+            "--format".to_string(),
+            "json".to_string(),
+            "--output".to_string(),
+            "result.json".to_string(),
+        ];
+
+        assert_eq!(
+            parse_args(&args),
+            Ok(CliArgs::Ocr {
+                input_path: "input.png".to_string(),
+                output_path: Some("result.json".to_string()),
+                languages: "zh-Hans,en-US".to_string(),
+                format: OcrFormat::Json,
+            })
+        );
     }
 
     #[test]

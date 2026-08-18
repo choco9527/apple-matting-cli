@@ -1,14 +1,14 @@
 [package]
 name = "apple-matting-cli"
-version = "0.2.0"
-description = "Local background removal CLI and HTTP service powered by macOS Vision"
+version = "0.3.0"
+description = "Local macOS Vision CLI for background removal and OCR"
 authors = ["XIAOBIN"]
 edition = "2021"
 license = "GPL-3.0-only"
 repository = "https://github.com/choco9527/apple-matting-cli"
 homepage = "https://github.com/choco9527/apple-matting-cli"
 readme = "README.md"
-keywords = ["matting", "background-removal", "vision", "macos", "cli"]
+keywords = ["matting", "background-removal", "ocr", "vision", "macos"]
 categories = ["command-line-utilities", "multimedia::images"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html

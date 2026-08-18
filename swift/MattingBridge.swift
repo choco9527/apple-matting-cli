@@ -337,3 +337,232 @@ private func updateBounds(
     maxX = max(maxX, x)
     maxY = max(maxY, y)
 }
+
+// MARK: - OCR
+
+// The OCR bridge deliberately writes the requested file itself. This keeps the
+// Foundation/Vision data types on the Swift side and leaves Rust responsible for
+// CLI parsing, paths, and HTTP transport.
+
+private enum OcrFailure: Int32, Error {
+    case loadFailed = -1
+    case recognitionFailed = -10
+    case writeFailed = -11
+    case pdfExceedsLimits = -12
+}
+
+private let maximumPdfPages = 200
+private let maximumPdfPagePixels: CGFloat = 32_000_000
+private let pdfRenderScale: CGFloat = 2
+
+private struct OcrItem: Codable {
+    let page: Int
+    let text: String
+    let confidence: Float
+    let boundingBox: [Double]
+}
+
+private struct OcrDocument: Codable {
+    let text: String
+    let items: [OcrItem]
+}
+
+@_cdecl("ocr_process_image")
+public func ocrProcessImage(
+    inputPath: UnsafePointer<CChar>,
+    outputPath: UnsafePointer<CChar>,
+    languages: UnsafePointer<CChar>,
+    jsonOutput: Bool
+) -> Int32 {
+    guard #available(macOS 10.15, *) else { return -99 }
+
+    return autoreleasepool {
+        do {
+            try processOcr(
+                input: String(cString: inputPath),
+                output: String(cString: outputPath),
+                languageCodes: String(cString: languages),
+                jsonOutput: jsonOutput
+            )
+            return 0
+        } catch let failure as OcrFailure {
+            return failure.rawValue
+        } catch {
+            return OcrFailure.recognitionFailed.rawValue
+        }
+    }
+}
+
+@available(macOS 10.15, *)
+private func processOcr(
+    input: String,
+    output: String,
+    languageCodes: String,
+    jsonOutput: Bool
+) throws {
+    let languages = languageCodes
+        .split(separator: ",")
+        .map { String($0) }
+    guard !languages.isEmpty else { throw OcrFailure.recognitionFailed }
+
+    let pageItems = try recognizeOcrPages(input, languages: languages)
+    var items: [OcrItem] = []
+    var pageTexts: [String] = []
+    for itemsOnPage in pageItems {
+        items.append(contentsOf: itemsOnPage)
+        pageTexts.append(itemsOnPage.map(\.text).joined(separator: "\n"))
+    }
+
+    let text = pageTexts.enumerated().map { index, pageText in
+        pageTexts.count > 1 ? "Page \(index + 1)\n\(pageText)" : pageText
+    }.joined(separator: "\n\n")
+    let document = OcrDocument(
+        text: text,
+        items: items
+    )
+
+    do {
+        let data: Data
+        if jsonOutput {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            data = try encoder.encode(document)
+        } else {
+            data = Data(document.text.utf8)
+        }
+        try data.write(to: URL(fileURLWithPath: output), options: .atomic)
+    } catch {
+        throw OcrFailure.writeFailed
+    }
+}
+
+@available(macOS 10.15, *)
+private func recognizeOcrPages(
+    _ input: String,
+    languages: [String]
+) throws -> [[OcrItem]] {
+    let inputURL = try resolveInputURL(input)
+    if inputURL.pathExtension.caseInsensitiveCompare("pdf") == .orderedSame {
+        return try recognizePdfPages(from: inputURL, languages: languages)
+    }
+    guard let image = CIImage(contentsOf: inputURL) else {
+        throw OcrFailure.loadFailed
+    }
+    return [try recognizeText(in: image, languages: languages, pageNumber: 1)]
+}
+
+private func recognizePdfPages(from url: URL, languages: [String]) throws -> [[OcrItem]] {
+    guard let document = CGPDFDocument(url as CFURL), document.numberOfPages > 0 else {
+        throw OcrFailure.loadFailed
+    }
+    guard document.numberOfPages <= maximumPdfPages else {
+        throw OcrFailure.pdfExceedsLimits
+    }
+
+    var results: [[OcrItem]] = []
+    results.reserveCapacity(document.numberOfPages)
+    for number in 1...document.numberOfPages {
+        let items: [OcrItem] = try autoreleasepool {
+            guard let page = document.page(at: number) else {
+                throw OcrFailure.loadFailed
+            }
+            let image = try renderPdfPage(page)
+            return try recognizeText(in: image, languages: languages, pageNumber: number)
+        }
+        results.append(items)
+    }
+    return results
+}
+
+private func renderPdfPage(_ page: CGPDFPage) throws -> CIImage {
+    let bounds = page.getBoxRect(.mediaBox).integral
+    let pixelWidth = (bounds.width * pdfRenderScale).rounded(.up)
+    let pixelHeight = (bounds.height * pdfRenderScale).rounded(.up)
+    let pixelCount = pixelWidth * pixelHeight
+    guard pixelWidth.isFinite, pixelHeight.isFinite,
+          pixelWidth > 0, pixelHeight > 0,
+          pixelWidth <= CGFloat(Int.max), pixelHeight <= CGFloat(Int.max),
+          pixelCount.isFinite, pixelCount <= maximumPdfPagePixels else {
+        throw OcrFailure.pdfExceedsLimits
+    }
+
+    let width = Int(pixelWidth)
+    let height = Int(pixelHeight)
+    let colorSpace = CGColorSpaceCreateDeviceRGB()
+    guard let context = CGContext(
+        data: nil,
+        width: width,
+        height: height,
+        bitsPerComponent: 8,
+        bytesPerRow: 0,
+        space: colorSpace,
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+    ) else {
+        throw OcrFailure.loadFailed
+    }
+
+    context.setFillColor(CGColor(gray: 1, alpha: 1))
+    context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+    context.scaleBy(x: pdfRenderScale, y: pdfRenderScale)
+    context.translateBy(x: -bounds.minX, y: -bounds.minY)
+    context.drawPDFPage(page)
+    guard let image = context.makeImage() else {
+        throw OcrFailure.loadFailed
+    }
+    return CIImage(cgImage: image)
+}
+
+@available(macOS 10.15, *)
+private func recognizeText(
+    in image: CIImage,
+    languages: [String],
+    pageNumber: Int
+) throws -> [OcrItem] {
+    let request = VNRecognizeTextRequest()
+    request.recognitionLevel = .accurate
+    request.usesLanguageCorrection = true
+    request.recognitionLanguages = languages
+
+    do {
+        try VNImageRequestHandler(ciImage: image, options: [:]).perform([request])
+    } catch {
+        throw OcrFailure.recognitionFailed
+    }
+
+    return (request.results ?? [])
+        .sorted(by: isBeforeInReadingOrder)
+        .compactMap { makeOcrItem($0, pageNumber: pageNumber) }
+}
+
+@available(macOS 10.15, *)
+private func isBeforeInReadingOrder(
+    _ left: VNRecognizedTextObservation,
+    _ right: VNRecognizedTextObservation
+) -> Bool {
+    let leftBox = left.boundingBox
+    let rightBox = right.boundingBox
+    if abs(leftBox.midY - rightBox.midY) < 0.02 {
+        return leftBox.minX < rightBox.minX
+    }
+    return leftBox.midY > rightBox.midY
+}
+
+@available(macOS 10.15, *)
+private func makeOcrItem(
+    _ observation: VNRecognizedTextObservation,
+    pageNumber: Int
+) -> OcrItem? {
+    guard let candidate = observation.topCandidates(1).first else { return nil }
+    let box = observation.boundingBox
+    return OcrItem(
+        page: pageNumber,
+        text: candidate.string,
+        confidence: candidate.confidence,
+        boundingBox: [
+            Double(box.minX),
+            Double(box.minY),
+            Double(box.width),
+            Double(box.height),
+        ]
+    )
+}
