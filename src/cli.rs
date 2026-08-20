@@ -1,4 +1,4 @@
-use std::net::SocketAddr;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::Path;
 
 use axum::extract::Multipart;
@@ -20,7 +20,7 @@ const USAGE: &str = "Usage:
   apple-matting-cli <input-image> [-o|--output <output-png>] [--crop] [--background <color>]
   apple-matting-cli --batch <input-dir> -o <output-dir> [--crop] [--background <color>] [--recursive] [--jobs <count>]
   apple-matting-cli ocr <input-image> [-o|--output <output-file>] [--lang <codes>] [--format <text|json>]
-  apple-matting-cli --server [--port <port>]
+  apple-matting-cli --server [--port <port>] [--bind <ip>]
   apple-matting-cli --version";
 
 #[derive(Debug, PartialEq, Eq)]
@@ -49,6 +49,7 @@ pub enum CliArgs {
     },
     Server {
         port: u16,
+        bind: IpAddr,
     },
 }
 
@@ -190,6 +191,7 @@ fn parse_run_args(args: &[String]) -> Result<CliArgs, String> {
 
 fn parse_server_args(args: &[String]) -> Result<CliArgs, String> {
     let mut port = DEFAULT_SERVER_PORT;
+    let mut bind = IpAddr::V4(Ipv4Addr::LOCALHOST);
     let mut index = 1;
 
     while index < args.len() {
@@ -204,11 +206,18 @@ fn parse_server_args(args: &[String]) -> Result<CliArgs, String> {
                     .map_err(|_| format!("Invalid port: {value}"))?;
                 index += 2;
             }
+            "--bind" => {
+                let value = args.get(index + 1).ok_or_else(|| USAGE.to_string())?;
+                bind = value
+                    .parse::<IpAddr>()
+                    .map_err(|_| format!("Invalid bind address: {value}"))?;
+                index += 2;
+            }
             _ => return Err(USAGE.to_string()),
         }
     }
 
-    Ok(CliArgs::Server { port })
+    Ok(CliArgs::Server { port, bind })
 }
 
 fn parse_batch_args(args: &[String]) -> Result<CliArgs, String> {
@@ -354,7 +363,7 @@ pub async fn run(args: Vec<String>) -> i32 {
                 1
             }
         },
-        Ok(CliArgs::Server { port }) => match run_server(port).await {
+        Ok(CliArgs::Server { port, bind }) => match run_server(bind, port).await {
             Ok(()) => 0,
             Err(error) => {
                 eprintln!("{error}");
@@ -383,8 +392,8 @@ fn report_batch(summary: BatchSummary) -> i32 {
     i32::from(summary.failed > 0)
 }
 
-async fn run_server(port: u16) -> Result<(), String> {
-    let address = SocketAddr::from(([0, 0, 0, 0], port));
+async fn run_server(bind: IpAddr, port: u16) -> Result<(), String> {
+    let address = SocketAddr::from((bind, port));
     let app = Router::new()
         .route("/matting", post(handle_matting))
         .route("/ocr", post(handle_ocr))
@@ -620,6 +629,7 @@ mod tests {
     use super::{parse_args, CliArgs, DEFAULT_BATCH_JOBS, DEFAULT_SERVER_PORT, USAGE};
     use crate::matting::Background;
     use crate::ocr::{OcrFormat, DEFAULT_LANGUAGES};
+    use std::net::{IpAddr, Ipv4Addr};
 
     #[test]
     fn parses_input_only() {
@@ -743,6 +753,7 @@ mod tests {
             parse_args(&args),
             Ok(CliArgs::Server {
                 port: DEFAULT_SERVER_PORT,
+                bind: IpAddr::V4(Ipv4Addr::LOCALHOST),
             })
         );
     }
@@ -756,7 +767,13 @@ mod tests {
             "9090".to_string(),
         ];
 
-        assert_eq!(parse_args(&args), Ok(CliArgs::Server { port: 9090 }));
+        assert_eq!(
+            parse_args(&args),
+            Ok(CliArgs::Server {
+                port: 9090,
+                bind: IpAddr::V4(Ipv4Addr::LOCALHOST),
+            })
+        );
     }
 
     #[test]
@@ -768,7 +785,31 @@ mod tests {
             "9090".to_string(),
         ];
 
-        assert_eq!(parse_args(&args), Ok(CliArgs::Server { port: 9090 }));
+        assert_eq!(
+            parse_args(&args),
+            Ok(CliArgs::Server {
+                port: 9090,
+                bind: IpAddr::V4(Ipv4Addr::LOCALHOST),
+            })
+        );
+    }
+
+    #[test]
+    fn parses_server_with_bind() {
+        let args = vec![
+            "apple-matting-cli".to_string(),
+            "--server".to_string(),
+            "--bind".to_string(),
+            "0.0.0.0".to_string(),
+        ];
+
+        assert_eq!(
+            parse_args(&args),
+            Ok(CliArgs::Server {
+                port: DEFAULT_SERVER_PORT,
+                bind: "0.0.0.0".parse::<IpAddr>().unwrap(),
+            })
+        );
     }
 
     #[test]

@@ -168,9 +168,10 @@ The default response is `text/plain; charset=utf-8`; `format=json` returns
 HTTP `400`; unsupported Vision language configurations and recognition failures return
 HTTP `422`.
 
-The server listens on `0.0.0.0` and enables permissive CORS. It has no built-in
-authentication, upload-size limit, rate limit, queue, or global concurrency
-limit. Keep it on a trusted network or place it behind an authenticated proxy.
+The server listens on `127.0.0.1` by default and enables permissive CORS; use
+`--bind <ip>` to change the address. It has no built-in authentication,
+upload-size limit, rate limit, queue, or global concurrency limit. Keep it on a
+trusted network or place it behind an authenticated proxy.
 
 ## Exit codes
 
@@ -200,7 +201,7 @@ Usage:
   apple-matting-cli <input-image> [-o|--output <output-png>] [--crop] [--background <color>]
   apple-matting-cli --batch <input-dir> -o <output-dir> [--crop] [--background <color>] [--recursive] [--jobs <count>]
   apple-matting-cli ocr <input-image> [-o|--output <output-file>] [--lang <codes>] [--format <text|json>]
-  apple-matting-cli --server [--port <port>]
+  apple-matting-cli --server [--port <port>] [--bind <ip>]
   apple-matting-cli --version
 ```
 

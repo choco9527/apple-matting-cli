@@ -152,8 +152,9 @@ curl -X POST -F "file=@input.png" -F "lang=zh-Hans,en-US" \
 `application/json; charset=utf-8`。空语言或无效格式返回 HTTP `400`；Vision 不支持的
 语言配置或识别失败返回 HTTP `422`。
 
-服务监听 `0.0.0.0` 并开放 CORS，目前没有内置鉴权、上传大小限制、限流、队列或
-全局并发控制。只应在可信网络使用，公网部署必须放在带鉴权和限流的代理后面。
+服务默认只监听 `127.0.0.1` 并开放 CORS，可通过 `--bind <ip>` 改为其它地址；目前
+没有内置鉴权、上传大小限制、限流、队列或全局并发控制。只应在可信网络使用，公网部署
+必须放在带鉴权和限流的代理后面。
 
 ## 退出码
 
@@ -182,7 +183,7 @@ Usage:
   apple-matting-cli <input-image> [-o|--output <output-png>] [--crop] [--background <color>]
   apple-matting-cli --batch <input-dir> -o <output-dir> [--crop] [--background <color>] [--recursive] [--jobs <count>]
   apple-matting-cli ocr <input-image> [-o|--output <output-file>] [--lang <codes>] [--format <text|json>]
-  apple-matting-cli --server [--port <port>]
+  apple-matting-cli --server [--port <port>] [--bind <ip>]
   apple-matting-cli --version
 ```
 
