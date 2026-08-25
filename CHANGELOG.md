@@ -7,6 +7,8 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-25
+
 ### Changed
 
 - `--server` 默认改为只监听 `127.0.0.1`，不再写死 `0.0.0.0`；新增 `--bind <ip>` 参数。

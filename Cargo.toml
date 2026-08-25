@@ -1,6 +1,6 @@
 [package]
 name = "apple-matting-cli"
-version = "0.3.0"
+version = "0.4.0"
 description = "Local macOS Vision CLI for background removal and OCR"
 authors = ["XIAOBIN"]
 edition = "2021"
