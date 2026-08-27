@@ -169,9 +169,10 @@ HTTP `400`; unsupported Vision language configurations and recognition failures 
 HTTP `422`.
 
 The server listens on `127.0.0.1` by default and enables permissive CORS; use
-`--bind <ip>` to change the address. It has no built-in authentication,
-upload-size limit, rate limit, queue, or global concurrency limit. Keep it on a
-trusted network or place it behind an authenticated proxy.
+`--bind <ip>` to change the address. Each HTTP request body is limited to 12 MB.
+The server has no built-in authentication, rate limit, queue, or global
+concurrency limit. Keep it on a trusted network or place it behind an
+authenticated proxy.
 
 ## Exit codes
 

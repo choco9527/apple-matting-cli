@@ -1,7 +1,7 @@
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::Path;
 
-use axum::extract::Multipart;
+use axum::extract::{DefaultBodyLimit, Multipart};
 use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
@@ -16,6 +16,7 @@ use crate::ocr::{normalize_languages, perform_ocr, OcrFormat, DEFAULT_LANGUAGES}
 const DEFAULT_SERVER_PORT: u16 = 8080;
 const DEFAULT_BATCH_JOBS: usize = 3;
 const MAX_BATCH_JOBS: usize = 64;
+const MAX_REQUEST_BODY_BYTES: usize = 12 * 1024 * 1024;
 const USAGE: &str = "Usage:
   apple-matting-cli <input-image> [-o|--output <output-png>] [--crop] [--background <color>]
   apple-matting-cli --batch <input-dir> -o <output-dir> [--crop] [--background <color>] [--recursive] [--jobs <count>]
@@ -394,10 +395,7 @@ fn report_batch(summary: BatchSummary) -> i32 {
 
 async fn run_server(bind: IpAddr, port: u16) -> Result<(), String> {
     let address = SocketAddr::from((bind, port));
-    let app = Router::new()
-        .route("/matting", post(handle_matting))
-        .route("/ocr", post(handle_ocr))
-        .layer(CorsLayer::permissive());
+    let app = server_router();
     let listener = tokio::net::TcpListener::bind(address)
         .await
         .map_err(|error| format!("Could not bind server to {address}: {error}"))?;
@@ -411,6 +409,14 @@ async fn run_server(bind: IpAddr, port: u16) -> Result<(), String> {
     axum::serve(listener, app)
         .await
         .map_err(|error| format!("Server error: {error}"))
+}
+
+fn server_router() -> Router {
+    Router::new()
+        .route("/matting", post(handle_matting))
+        .route("/ocr", post(handle_ocr))
+        .layer(DefaultBodyLimit::max(MAX_REQUEST_BODY_BYTES))
+        .layer(CorsLayer::permissive())
 }
 
 async fn handle_ocr(mut multipart: Multipart) -> Result<Response, ApiError> {
@@ -626,10 +632,15 @@ mod background_tests;
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_args, CliArgs, DEFAULT_BATCH_JOBS, DEFAULT_SERVER_PORT, USAGE};
+    use super::{
+        parse_args, server_router, CliArgs, DEFAULT_BATCH_JOBS, DEFAULT_SERVER_PORT, USAGE,
+    };
     use crate::matting::Background;
     use crate::ocr::{OcrFormat, DEFAULT_LANGUAGES};
+    use axum::body::Body;
+    use axum::http::{header, Request, StatusCode};
     use std::net::{IpAddr, Ipv4Addr};
+    use tower::util::ServiceExt;
 
     #[test]
     fn parses_input_only() {
@@ -1003,5 +1014,33 @@ mod tests {
             parse_args(&args),
             Err("Invalid port: not-a-port".to_string())
         );
+    }
+
+    #[tokio::test]
+    async fn accepts_multipart_bodies_larger_than_two_megabytes() {
+        let boundary = "large-upload-boundary";
+        let mut body = format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"large.png\"\r\nContent-Type: image/png\r\n\r\n"
+        )
+        .into_bytes();
+        body.extend(std::iter::repeat_n(b'x', 2 * 1024 * 1024 + 1));
+        body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/matting")
+            .header(
+                header::CONTENT_TYPE,
+                format!("multipart/form-data; boundary={boundary}"),
+            )
+            .body(Body::from(body))
+            .expect("request should build");
+
+        let response = server_router()
+            .oneshot(request)
+            .await
+            .expect("router should respond");
+
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
     }
 }

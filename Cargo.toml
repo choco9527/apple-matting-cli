@@ -1,6 +1,6 @@
 [package]
 name = "apple-matting-cli"
-version = "0.4.0"
+version = "0.4.1"
 description = "Local macOS Vision CLI for background removal and OCR"
 authors = ["XIAOBIN"]
 edition = "2021"
@@ -28,3 +28,6 @@ tempfile = "3"
 thiserror = "1"
 tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "fs"] }
 tower-http = { version = "0.6", features = ["cors"] }
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }

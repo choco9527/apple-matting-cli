@@ -7,6 +7,13 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-08-27
+
+### Changed
+
+- Increase the HTTP multipart request-body limit from Axum's 2 MiB default to 12 MiB.
+- Add a regression test covering multipart uploads larger than 2 MiB.
+
 ## [0.4.0] - 2026-08-25
 
 ### Changed
